@@ -1,0 +1,13 @@
+方法一：
+
+	$ npm install
+
+	$ npx tsc
+
+	$ node out/index.js
+
+方法二：
+
+	$ npm install
+
+	$ npm run start

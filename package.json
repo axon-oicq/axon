@@ -1,0 +1,17 @@
+{
+    "name": "Axon_server",
+    "version": "1.0.0",
+    "main": "out/index.js",
+    "license": "Unlicense",
+    "dependencies": {
+        "oicq": "^2.1.9",
+        "typescript": "^4.5.5"
+    },
+    "devDependencies": {
+        "@types/node": "^17.0.17"
+    },
+    "scripts": {
+        "build": "tsc",
+        "start": "npm run-script build && node out/index.js"
+    }
+}
