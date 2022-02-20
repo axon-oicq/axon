@@ -1,4 +1,136 @@
 ======================================================================
+                        Axon 0.0.2 调用规则
+
+	    Axon 是一个 Socket 服务端，通过 JSON 交换数据。修改
+	源文件中的 HOST 变量可以修改监听地址，修改 PORT 变量可以修改
+	监听端口。
+
+	    目前支持单个客户端调用 Axon，多个客户端只能共享调用一个 OICQ
+	客户端。进行的所有 Socket 连接都需要带阻塞。客户端向 Axon 发送命令
+	来执行操作，Axon 至少需要返回一个包含状态（status）的回应。
+
+	    目前所有支持的命令有：HELO, STATE, INIT, LOGIN, UDUMP, GDUMP
+	USEND, GSEND, UINFO, GINFO, GMLIST, WHOAMI, ULOOKUP, GULOOKUP
+
+	    目前可能的回复状态（status）有：
+
+		* RET_OK status=0 （请求成功）
+
+		* RET_ERR_UNKNOWN status=-2 （未知请求对象）
+
+		* RET_ERR_NO_CLIENT status=-1 （找不到客户端）
+
+		* RET_ERR_NON_EXIST status=-3 （请求对象不存在）
+
+	    目前 Axon 有三种状态（state），命令只应该在特定的状态下执行。
+
+	    	* state=0 （需要初始化）
+
+		* state=1 （需要登录）
+
+		* state=2 （登录完成，帐号上线）
+
+	    下面是一些命令的示例：
+
+	* INIT 初始化一个 QQ 号是 0000000000 的 OICQ 客户端
+
+	       uin：字符串或整数，初始化客户端的 QQ 号
+
+	  请求：{ "command": "INIT", "uin": "0000000000" }
+
+	  回复：RET_OK
+
+	* LOGIN 以密码 abcd1234 登录 QQ
+
+	       passwd：字符串，密码或密码的 16 位 MD5
+
+	  请求：{ "command": "LOGIN", "passwd": "abcd1234" }
+
+	  回复：RET_OK | RET_ERR_UNKNOWN
+
+	* STATE 获取目前客户端状态
+
+	  请求：{ "command": "STATE" }
+
+	  回复：{ RET_OK, "state": 0 }
+
+	* HELO 和服务端打招呼（测试通联性）
+
+	  请求：{ "command": "HELO" }
+
+	  回复：{ RET_OK, "backend": "Axon", "version": "0.0.2" }
+
+	* UDUMP 输出所有好友的 QQ 号
+
+	  请求：{ "command": "UDUMP" }
+
+	  回复：{ RET_OK, "fl": [0000000001, 0000000002] } | RET_ERR_NO_CLIENT
+
+	* GDUMP 输出所有群的群号
+
+	  请求：{ "command": "GDUMP" }
+
+	  回复：{ RET_OK, "gl": [0000000001, 0000000002] } | RET_ERR_NO_CLIENT
+
+	* USEND 发送一条私聊消息
+
+	      uid：字符串，目标好友。
+
+	      message： MessageElm（见 OICQ）或字符串，要发送的消息。
+
+	  请求：{ "command": "USEND", "uid": "0000000000", "message": "Hello World!" }
+
+	  回复：RET_OK | RET_ERR_NO_CLIENT | RET_ERR_UNKNOWN
+
+	* GSEND 发送一条群聊消息
+
+	      gid：字符串，目标群聊。
+
+	      message： MessageElm（见 OICQ）或字符串，要发送的消息。
+
+	  请求：{ "command": "GSEND", "gid", "0000000000", "message": "Hello World!" }
+
+	  回复：RET_OK | RET_ERR_NO_CLIENT | RET_ERR_UNKNOWN
+
+	* GINFO 获取群聊信息
+
+	      id：字符串，目标群聊。
+
+	  请求：{ "command": "GINFO", "id", "0000000000" }
+
+	  回复：{ RET_OK, "name": "群聊名称" } | RET_ERR_NO_CLIENT
+
+	* UINFO 获取群聊信息
+
+	      uid：字符串，目标群聊。
+
+	  请求：{ "command": "UINFO", "uid", "0000000000" }
+
+	  回复：{ RET_OK, "name": "好友昵称", "remark": "好友备注" } | RET_ERR_NO_CLIENT
+
+	* GMLIST 获取群聊中的成员列表
+
+	      id：字符串，目标群聊。
+
+	  请求：{ "command": "GMLIST", "id": "0000000000" }
+
+	  回复：{ RET_OK, "list": [0000000001, 0000000002] } | RET_ERR_NO_CLIENT
+
+	* WHOAMI 获取 OICQ 客户端的昵称。
+
+	  请求：{ "command": "WHOAMI" }
+
+	  回复：{ RET_OK, "name": "我是个啥B" } | RET_ERR_NO_CLIENT
+
+	    更多有关使用 Axon 的问题，可以在 Github Issues 内提交。
+	也可以通过邮件联系我 axon-oicq@riseup.net。我们十分欢迎您提出的：
+	意见、建议和评论。
+
+			Copyright (C) axon-oicq team 2022
+	在保留此声明的情况下，允许对此文章进行逐字复制并发布到任何地方。
+
+======================================================================
+======================================================================
                         Axon 0.0.2 解析规则
 
 	    Axon 需要保证所有返回的昵称（Nickname）都是独一无二的。
