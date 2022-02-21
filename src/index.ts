@@ -1,4 +1,4 @@
-import { createClient, Client, PrivateMessageEvent } from "oicq"
+import { createClient, Client, MemberInfo, FriendInfo } from "oicq"
 import * as net from "net"
 
 /* 初始化 OICQ 客户端 */
@@ -7,7 +7,7 @@ let client: Client;
 /* 提供有关后端的必要信息 */
 const MOTD = {
     backend: "Axon",
-    version: "0.0.1",
+    version: "0.0.2",
     status: 0
 }
 
@@ -35,6 +35,20 @@ const RET_STATUS_EVENT = 1
 const E_FRIEND_MESSAGE = 1
 const E_GROUP_MESSAGE  = 2
 
+/* 返回列表中，昵称相同的人的昵称 */
+function resolveMemberList(l: Map<number, MemberInfo | FriendInfo>): string[] {
+    let allNames: string[] = new Array
+
+    for (let member of l.values()) {
+	allNames.push(member.nickname)
+    }
+    
+    return allNames.filter((x, i, self) => {
+	return self.indexOf(x) === i && self.lastIndexOf(x) !== i
+    })
+}
+
+/* 检查客户端是否存在 */
 function checkClient(sock: net.Socket, client: Client | undefined) {
     if (!client) {
 	sock.write(RET_ERR_NO_CLIENT)
@@ -43,6 +57,7 @@ function checkClient(sock: net.Socket, client: Client | undefined) {
     return true
 }
 
+/* 监听事件，通过 Socket 发送 */
 function hookEvent(sock: net.Socket, client: Client) {
     client.on("message.private", (e) => {
 	let text = ""
@@ -91,7 +106,7 @@ const commandList: any =
     "HELO": (sock: net.Socket, _: any) => sock.write(j(MOTD)),
     "STATE": (sock: net.Socket, _: any) => {
 	/* 查询 OICQ 状态，有关状态的定义在开头 */
-	sock.write(j({ "state": STATE }))
+	sock.write(j({ "status": 0, "state": STATE }))
     },
     "INIT": (sock: net.Socket, data: any) => {
 	/* 初始化 OICQ 客户端，需要参数 uin （类型为 int/str） */
@@ -195,20 +210,27 @@ const commandList: any =
 	/* 获取群成员列表 */
 	if (!checkClient(sock, client))
 	    return
-	let list = new Array;
+	let memberList = await client.getGroupMemberList(data.id)
+	let duplicatedList = resolveMemberList(memberList)
+	let nameList = new Array
 	
-	for (let member of (await client.getGroupMemberList(data.id)).values())
+	for (let m of memberList.values())
 	{
 	    // list.push({
 	    //	 "uid": member.user_id,
 	    //   "name": member.nickname
 	    // })
-	    list.push(member.nickname)
+	    if (duplicatedList.includes(m.nickname)) {
+		nameList.push(
+		    m.nickname.concat('#').concat(m.user_id.toString().slice(-4))
+		)
+	    } else
+		nameList.push(m.nickname)
 	}
 
 	sock.write(j({
 	    "status": 0,
-	    "list": list
+	    "list": nameList
 	}))
     },
     "WHOAMI": async (sock: net.Socket, data: any) => {
@@ -221,13 +243,61 @@ const commandList: any =
 	    "name": client.nickname
 	}))
     },
+    "ULOOKUP": async (sock: net.Socket, data: any) => {
+	/* 根据昵称查询一个用户 */
+	if (!checkClient(sock, client))
+	    return
+	let finalId;
+	/* 有关替代昵称见 RULES 文件 */
+	client.fl.forEach((f) => {
+	    if (f.nickname === data.nickname)
+		finalId = f.user_id
+	    if (f.user_id.toString().endsWith(data.nickname.split("#")[1]))
+		finalId = f.user_id
+	})
+	if (!finalId) {
+	    sock.write(RET_ERR_NON_EXIST)
+	} else {
+	    sock.write(j({
+		"status": 0,
+		"uid": finalId
+	    }))
+	}
+    },
+    "GULOOKUP": async (sock: net.Socket, data: any) => {
+	/* 根据昵称查询一个用户 */
+	if (!checkClient(sock, client))
+	    return
+	let finalId;
+	/* 有关替代昵称见 RULES 文件 */
+	for (let m of (await client.getGroupMemberList(data.id)).values()) {
+	    if (m.nickname === data.nickname)
+		finalId = m.user_id
+	    if (m.user_id.toString().endsWith(data.nickname.split("#")[1]))
+		finalId = m.user_id
+	}
+	if (!finalId) {
+	    sock.write(RET_ERR_NON_EXIST)
+	} else {
+	    sock.write(j({
+		"status": 0,
+		"uid": finalId
+	    }))
+	}
+    }
 }
 
 const server = net.createServer((sock) => {
     sock.on('data', (data: Buffer) => {
-	let parsedData: any = JSON.parse(data.toString())
+	let parsedData: any;
+	try { parsedData = JSON.parse(data.toString()) }
+	catch (e) {
+	    console.log("JSON 解析发生错误：", e)
+	    return
+	}
 	/* 调用对应的函数 */
-	commandList[parsedData.command](sock, parsedData);
+	try { commandList[parsedData.command](sock, parsedData) }
+	catch (e) { console.log("调用命令时发生错误：", e) }
     })
 
     sock.on('close', (data: Buffer) => {
