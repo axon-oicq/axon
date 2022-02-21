@@ -16,7 +16,7 @@
 
 		* RET_OK status=0 （请求成功）
 
-		* RET_ERR_UNKNOWN status=-2 （未知请求对象）
+		* RET_ERR_UNKNOWN status=-2 （未知错误）
 
 		* RET_ERR_NO_CLIENT status=-1 （找不到客户端）
 
