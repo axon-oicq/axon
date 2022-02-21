@@ -122,6 +122,26 @@
 
 	  回复：{ RET_OK, "name": "我是个啥B" } | RET_ERR_NO_CLIENT
 
+	* ULOOKUP 根据昵称获取好友的 QQ 号
+
+	      nickname：字符串，要查询的昵称（或替代昵称）。
+
+	  请求：{ "command": "ULOOKUP", "nickname": "sb" }
+
+	  回复：{ RET_OK, "id": 0000000000 } | RET_ERR_NO_CLIENT | RET_NON_EXIST
+
+	* GULOOKUP 根据昵称获取群成员的 QQ 号
+
+	      id：字符串，目标群聊。
+
+	      nickname：字符串，要查询的昵称（或替代昵称）。
+
+
+	  请求：{ "command": "ULOOKUP", "id": "0000000000", "nickname": "sb" }
+
+	  回复：{ RET_OK, "id": 0000000000 } | RET_ERR_NO_CLIENT | RET_NON_EXIST
+
+
 	    更多有关使用 Axon 的问题，可以在 Github Issues 内提交。
 	也可以通过邮件联系我 axon-oicq@riseup.net。我们十分欢迎您提出的：
 	意见、建议和评论。
