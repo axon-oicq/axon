@@ -213,6 +213,8 @@ const commandList: any =
 	let memberList = await client.getGroupMemberList(data.id)
 	let duplicatedList = resolveMemberList(memberList)
 	let nameList = new Array
+
+	let owner, adminList = new Array;
 	
 	for (let m of memberList.values())
 	{
@@ -221,16 +223,27 @@ const commandList: any =
 	    //   "name": member.nickname
 	    // })
 	    if (duplicatedList.includes(m.nickname)) {
-		nameList.push(
-		    m.nickname.concat('#').concat(m.user_id.toString().slice(-4))
-		)
-	    } else
+		const altName = m.nickname.concat('#')
+		    .concat(m.user_id.toString().slice(-4))
+		nameList.push(altName)
+		if (m.role === "owner")
+		    owner = altName
+		else if (m.role === "admin")
+		    adminList.push(altName)
+	    } else {
 		nameList.push(m.nickname)
+		if (m.role === "owner")
+		    owner = m.nickname
+		else if (m.role === "admin")
+		    adminList.push(m.nickname)
+	    }
 	}
 
 	sock.write(j({
 	    "status": 0,
-	    "list": nameList
+	    "list": nameList,
+	    "owner": owner,
+	    "admin": adminList
 	}))
     },
     "WHOAMI": async (sock: net.Socket, data: any) => {
