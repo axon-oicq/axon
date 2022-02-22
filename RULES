@@ -114,7 +114,7 @@
 
 	  请求：{ "command": "GMLIST", "id": "0000000000" }
 
-	  回复：{ RET_OK, "list": [0000000001, 0000000002], "owner": 0000000001, "admin": [] } | RET_ERR_NO_CLIENT
+	  回复：{ RET_OK, "list": ["U1", "U2#0002", "U2#0001"], "owner": "U1", "admin": [ "U2#0001" ] } | RET_ERR_NO_CLIENT
 
 	* WHOAMI 获取 OICQ 客户端的昵称。
 
