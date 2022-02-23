@@ -10,7 +10,7 @@
 	来执行操作，Axon 至少需要返回一个包含状态（status）的回应。
 
 	    目前所有支持的命令有：HELO, STATE, INIT, LOGIN, UDUMP, GDUMP
-	USEND, GSEND, UINFO, GINFO, GMLIST, WHOAMI, ULOOKUP, GULOOKUP
+	USEND, GSEND, IDINFO, GINFO, GMLIST, WHOAMI, LOOKUP
 
 	    目前可能的回复状态（status）有：
 
@@ -100,13 +100,13 @@
 
 	  回复：{ RET_OK, "name": "群聊名称" } | RET_ERR_NO_CLIENT
 
-	* UINFO 获取群聊信息
+	* IDINFO 获取群聊信息
 
-	      uid：字符串，目标群聊。
+	      uid：字符串，目标ID。
 
 	  请求：{ "command": "UINFO", "uid", "0000000000" }
 
-	  回复：{ RET_OK, "name": "好友昵称", "remark": "好友备注" } | RET_ERR_NO_CLIENT
+	  回复：{ RET_OK, "nickname": "好友昵称", "uid": 0000000000, "sex": "unknown" } | RET_ERR_NO_CLIENT
 
 	* GMLIST 获取群聊中的成员列表
 
@@ -122,24 +122,16 @@
 
 	  回复：{ RET_OK, "name": "我是个啥B" } | RET_ERR_NO_CLIENT
 
-	* ULOOKUP 根据昵称获取好友的 QQ 号
-
-	      nickname：字符串，要查询的昵称（或替代昵称）。
-
-	  请求：{ "command": "ULOOKUP", "nickname": "sb" }
-
-	  回复：{ RET_OK, "uid": 0000000000 } | RET_ERR_NO_CLIENT | RET_NON_EXIST
-
-	* GULOOKUP 根据昵称获取群成员的 QQ 号
+	* LOOKUP 根据昵称获取群成员的 QQ 号
 
 	      id：字符串，目标群聊。
 
 	      nickname：字符串，要查询的昵称（或替代昵称）。
 
 
-	  请求：{ "command": "ULOOKUP", "id": "0000000000", "nickname": "sb" }
+	  请求：{ "command": "ULOOKUP", "nickname": "sb" }
 
-	  回复：{ RET_OK, "uid": 0000000000 } | RET_ERR_NO_CLIENT | RET_NON_EXIST
+	  回复：{ RET_OK, "uid": 0000000000, "nickname": "some", "sex": "unknown" } | RET_ERR_NO_CLIENT | RET_NON_EXIST
 
 
 	    更多有关使用 Axon 的问题，可以在 Github Issues 内提交。
