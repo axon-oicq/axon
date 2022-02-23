@@ -128,7 +128,7 @@
 
 	  请求：{ "command": "ULOOKUP", "nickname": "sb" }
 
-	  回复：{ RET_OK, "id": 0000000000 } | RET_ERR_NO_CLIENT | RET_NON_EXIST
+	  回复：{ RET_OK, "uid": 0000000000 } | RET_ERR_NO_CLIENT | RET_NON_EXIST
 
 	* GULOOKUP 根据昵称获取群成员的 QQ 号
 
@@ -139,7 +139,7 @@
 
 	  请求：{ "command": "ULOOKUP", "id": "0000000000", "nickname": "sb" }
 
-	  回复：{ RET_OK, "id": 0000000000 } | RET_ERR_NO_CLIENT | RET_NON_EXIST
+	  回复：{ RET_OK, "uid": 0000000000 } | RET_ERR_NO_CLIENT | RET_NON_EXIST
 
 
 	    更多有关使用 Axon 的问题，可以在 Github Issues 内提交。
