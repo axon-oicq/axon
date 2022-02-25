@@ -10,7 +10,7 @@
 	来执行操作，Axon 至少需要返回一个包含状态（status）的回应。
 
 	    目前所有支持的命令有：HELO, STATE, INIT, LOGIN, UDUMP, GDUMP
-	USEND, GSEND, IDINFO, GINFO, GMLIST, WHOAMI, LOOKUP
+	USEND, GSEND, IDINFO, GINFO, FLIST, GMLIST, WHOAMI, LOOKUP
 
 	    目前可能的回复状态（status）有：
 
@@ -107,6 +107,12 @@
 	  请求：{ "command": "UINFO", "uid", "0000000000" }
 
 	  回复：{ RET_OK, "nickname": "好友昵称", "uid": 0000000000, "sex": "unknown" } | RET_ERR_NO_CLIENT
+
+	* FLIST 获取好友列表
+
+	  请求：{ "command": "FLIST" }
+
+	  回复：{ RET_OK, "list": [ "好友昵称" ], "idlist": [ 0000000000 ] } | RET_ERR_NO_CLIENT
 
 	* GMLIST 获取群聊中的成员列表
 

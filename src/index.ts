@@ -299,6 +299,31 @@ const commandList: any =
 	    "admin": adminList
 	}))
     },
+    "FLIST": async (sock: net.Socket, _: any) => {
+	/* 获取好友列表 */
+	if (!checkClient(sock, client))
+	    return
+	let memberList = client.getFriendList()
+	let nameList = [], idList = []
+
+	for (let m of memberList.values())
+	{
+	    if (generalDupList.includes(m.nickname)) {
+		const altName = m.nickname.concat('#')
+		    .concat(m.user_id.toString().slice(-4))
+		nameList.push(altName)
+	    } else
+		nameList.push(m.nickname)
+	    idList.push(m.user_id)
+	}
+
+	sock.write(j({
+	    "status": 0,
+	    "list": nameList,
+	    "idlist": idList
+	}))
+
+    },
     "WHOAMI": async (sock: net.Socket, _: any) => {
 	/* 获取我的名字 */
 	if (!checkClient(sock, client))
