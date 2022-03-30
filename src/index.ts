@@ -1,11 +1,20 @@
 import { createClient, Client, MemberInfo, FriendInfo, segment, GroupInviteEvent } from "oicq"
 import * as net from "net"
+import * as path from "path"
 
 /* 初始化 OICQ 客户端 */
 let client: Client;
 let generalInfoList: (MemberInfo | FriendInfo)[] = []
 let generalDupList: string[] = []
 let currentInvitation: GroupInviteEvent;
+
+/* 修复打包后的路径错误 */
+let data_dir: string;
+if ("pkg" in process) {
+  data_dir = path.resolve(process.execPath + '/..');
+} else {
+  data_dir = path.join(require.main ? require.main.path : process.cwd())
+}
 
 /* 提供有关后端的必要信息 */
 const MOTD = {
@@ -26,7 +35,7 @@ let STATE = 0;
 
 /* 函数别名，方便转换 */
 const j = (some: any) => {
-    console.log('O: ', some)
+    // console.log('O: ', some)
     return JSON.stringify(some)
 }
 
@@ -258,8 +267,10 @@ const commandList: any =
     "INIT": (sock: net.Socket, data: any) => {
 	/* 初始化 OICQ 客户端，需要参数 uin （类型为 int/str） */
 	generalInfoList = []
+
 	client = createClient(data.uin, {
-	    platform: Number(data.platform)
+	    platform: Number(data.platform),
+	    data_dir
 	})
 	sock.write(RET_OK)
 	STATE = 1
@@ -267,6 +278,7 @@ const commandList: any =
     "LOGIN": (sock: net.Socket, data: any) => {
 	/* 登录到 QQ 服务器，需要参数 passwd （类型为 str） */
 	client.once("system.login.qrcode", () => {
+	    client.logger.info("验证完成后敲击Enter继续..");
             process.stdin.once("data", () => {
 		client.login()
             })
@@ -544,7 +556,7 @@ const server = net.createServer((sock) => {
 	    return
 	}
 	/* 调用对应的函数 */
-	console.log('R:', parsedData)
+	// console.log('R:', parsedData)
 	try { commandList[parsedData.command](sock, parsedData) }
 	catch (e) { console.log("调用命令时发生错误：", e) }
     })
