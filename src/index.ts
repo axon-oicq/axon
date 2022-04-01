@@ -19,7 +19,7 @@ if ("pkg" in process) {
 /* 提供有关后端的必要信息 */
 const MOTD = {
     backend: "Axon",
-    version: "1.0.0",
+    version: "1.0.1",
     status: 0
 }
 
@@ -277,19 +277,20 @@ const commandList: any =
     },
     "LOGIN": (sock: net.Socket, data: any) => {
 	/* 登录到 QQ 服务器，需要参数 passwd （类型为 str） */
-	client.once("system.login.qrcode", () => {
+	client.on("system.login.qrcode", () => {
 	    client.logger.info("验证完成后敲击Enter继续..");
             process.stdin.once("data", () => {
 		client.login()
             })
 	})
-	client.once("system.login.device", () => {
+	client.on("system.login.device", () => {
             client.logger.info("验证完成后敲击Enter继续..");
             process.stdin.once("data", () => {
 		client.login()
             })
 	})
-	client?.login(data.passwd).then(() => {
+
+	const loginCb = () => {
 	    client.once("system.online", () => {
 		/* 生成重复昵称列表 */
 		let promises = []
@@ -311,14 +312,18 @@ const commandList: any =
 		    hookEvent(sock, client)
 		    return []
 		})
-	    });
+	    })
 
 	    client.once("system.login.error", () => {
 		sock.write(RET_ERR_UNKNOWN)
 		client.removeAllListeners("system.online")
-	    });
+	    })}
+		      
 
-	})
+	if (data.method === "0")
+	    client?.login(data.passwd).then(loginCb);
+	else (data.method === "1")
+	    client?.login().then(loginCb);
     },
     "UDUMP": (sock: net.Socket, _: any ) => {
 	/* 输出 OICQ 客户端中的所有好友 ID */
