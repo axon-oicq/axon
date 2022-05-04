@@ -32,12 +32,28 @@ export interface USEND_INFO {
     message: string
 }
 
+/* 向一个好友发送图片消息 */
+export interface USEND_IMG_INFO {
+    /* 发送的对象（替代昵称） */
+    id: string
+    /* 文本消息 */
+    data: string
+}
+
 /* 向一个群聊发送消息 */
 export interface GSEND_INFO {
     /* 发送的对象（QQ群） */
     id: string
     /* 文本消息 */
     message: string
+}
+
+/* 向一个群聊发送图片 */
+export interface GSEND_INFO {
+    /* 发送的对象（QQ群） */
+    id: string
+    /* 文本消息 */
+    data: string
 }
 
 /* 向好友发送窗口抖动 */

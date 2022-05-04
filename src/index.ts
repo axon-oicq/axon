@@ -61,12 +61,17 @@ class AxonClient {
 
     queue = new Queue(1, Infinity)
 
+    buffer: string = ''
+    isReading: boolean = false
+
     /* 命令调用表 */
     callTable: any = {
 	"INIT":        this._initCb,
 	"LOGIN":       this._loginCb,
 	"USEND":       this._usendCb,
+	"USEND_IMG":   this._usendImgCb,
 	"GSEND":       this._gsendCb,
+	"GSEND_IMG":   this._gsendImgCb,
 	"USEND_SHAKE": this._usendShakeCb,
 	"GINFO":       this._ginfoCb,
 	"GMLIST":      this._gmlistCb,
@@ -332,6 +337,18 @@ class AxonClient {
 	    })
     }
 
+    async _usendImgCb (info: i.USEND_IMG_INFO) {
+	console.log(info.data)
+	this.client?.pickFriend(this.idFromAltName(info.id))
+	    .sendMsg(segment.image(Buffer.from(info.data, 'base64')))
+	    .then(() => {
+		this.conn.write(c.R_OK_J)
+	    }).catch((e) => {
+		console.log("发送消息出错：", e)
+		this.conn.write(c.R_ERR_UNKNOWN_J)
+	    })
+    }
+
      async _gsendCb (info: i.GSEND_INFO) {
 	this.client?.pickGroup(Number(info.id))
 	    .sendMsg(info.message).then(() => {
@@ -341,6 +358,18 @@ class AxonClient {
 		this.conn.write(c.R_ERR_UNKNOWN_J)
 	    })
     }
+
+    async _gsendImgCb (info: i.GSEND_INFO) {
+	this.client?.pickGroup(Number(info.id))
+	    .sendMsg(segment.image(Buffer.from(info.data, 'base64')))
+	    .then(() => {
+		this.conn.write(c.R_OK_J)
+	    }).catch((e) => {
+		console.log("发送消息出错：", e)
+		this.conn.write(c.R_ERR_UNKNOWN_J)
+	    })
+    }
+
 
     async _usendShakeCb (info: i.USEND_SHAKE_INFO) {
 	this.client?.pickFriend(this.idFromAltName(info.id))
@@ -505,20 +534,37 @@ class AxonClient {
     }
 
     handleData (data: Buffer) {
-	let d: any;
+	let text = data.toString()
+	let d: any, skip = false
+	if (!text.endsWith('}') && text.startsWith('{')
+	    && !this.isReading) {
+	    this.isReading = true
+	    this.buffer = data.toString()
+	    return
+
+	} else if (!text.endsWith('}') && this.isReading) {
+	    this.buffer = this.buffer
+		.concat(data.toString())
+	    return
+	} else if (text.endsWith('}') && this.isReading) {
+	    this.buffer = this.buffer
+		.concat(data.toString())
+	    this.isReading = false
+	    skip = true
+	}
+	
 	try {
-	    d = JSON.parse(data.toString())
+	    if (!skip)
+		d = JSON.parse(text)
+	    else
+		d = JSON.parse(this.buffer)
 	} catch (e) {
 	    console.log("JSON 解析失败： ", e)
 	    return
 	}
-	// console.log(d)
-	try {
-	    this.queue.add(() => this.callTable[d.command].bind(this)(d));
-	} catch (e) {
-	    console.log("命令调用失败：", e)
-	    return
-	}
+
+	this.queue.add(() => this.callTable[d.command].bind(this)(d))
+	    .catch((e) => { console.log("命令调用失败：", e) })
     }
 
     _handle_err (err: Error) {
