@@ -6,7 +6,8 @@ import Queue from 'promise-queue'
 import { Client, createClient, FriendInfo, GroupInviteEvent, GroupMessageEvent,
 	 MemberDecreaseEvent, MemberIncreaseEvent, MemberInfo, PrivateMessageEvent,
          MessageElem, 
-         segment} from 'oicq'
+         segment,
+         GroupRecallEvent} from 'oicq'
 
 function resolveAcctList(l: Array<MemberInfo | FriendInfo>): string[] {
     let allNames: string[] = [], dupNames: string[] = []
@@ -80,6 +81,7 @@ class AxonClient {
 	"WHOAMI":      this._whoamiCb,
 	"STATUS":      this._statusCb,
 	"LOOKUP":      this._lookupCb,
+	"GOAHEAD":     this._goAheadCb,
     }
 
     /* 从替代昵称获取 ID */
@@ -206,6 +208,8 @@ class AxonClient {
 	let text: string = '';
 
 	e.message.forEach(msg => {
+	    console.log(msg)
+
 	    if ((msg.type == "image" || msg.type == "flash") && msg.url) {
 		if (! msg.url) return
 
@@ -272,6 +276,15 @@ class AxonClient {
 	}))
     }
 
+    async _eGroupRecall(e: GroupRecallEvent) {
+	this.conn.write(c.j({
+	    "status": c.R_STAT_EVENT,
+	    "type"  : c.E_GROUP_RECALL,
+	    "name": this.altNameFromId(e.user_id),
+	    "id"    : e.group_id
+	}))
+    }
+
     bindEventCb() {
 	this.client?.on('message.private',       (e) => this.queue.add(() =>
 	    this._ePrivateMessage.bind(this)(e)))
@@ -283,30 +296,51 @@ class AxonClient {
 	    this._eGroupIncrease.bind(this)(e)))
 	this.client?.on('notice.group.decrease', (e) => this.queue.add(() =>
 	    this._eGroupDecrease.bind(this)(e)))
+	this.client?.on('notice.group.recall',   (e) => this.queue.add(() =>
+	    this._eGroupRecall.bind(this)(e)))
     }
 
+    async _goAheadCb (_: null) {
+	this.client?.login()
+    }
+    
     async _loginCb (info: i.LOGIN_INFO) {
 	/* 添加回调 */
-	this.client?.once('system.online', async () => {
+	this.client?.on('system.online', async () => {
 	    await this.updateTable()
 	    this.bindEventCb()
 	})
 
-	this.client?.once('system.login.error', async () => {
-	    this.conn.write(c.R_ERR_UNKNOWN_J)
+	this.client?.on('system.login.error', async (err) => {
+	    this.conn.write(c.j({
+		"status":  c.R_ERR_UNKNOWN,
+		"login":   c.L_ERROR,
+		"message": err.message
+	    }))
 	})
 
-	this.client?.on("system.login.qrcode", () => {
-	    this.client?.logger.info("验证完成后敲击Enter继续..");
-            process.stdin.once("data", () => {
-		this.client?.login()
-            })
+	this.client?.on('system.login.qrcode', async (qr) => {
+	    this.conn.write(c.j({
+		"status": c.R_ERR_UNKNOWN,
+		"login":  c.L_QRCODE,
+		"code":   qr.image.toString('base64')
+	    }))
 	})
-	this.client?.on("system.login.device", () => {
-            this.client?.logger.info("验证完成后敲击Enter继续..");
-            process.stdin.once("data", () => {
-		this.client?.login()
-            })
+
+	this.client?.on('system.login.slider', async (slider) => {
+	    this.conn.write(c.j({
+		"status": c.R_ERR_UNKNOWN,
+		"login":  c.L_SLIDER,
+		"url":    slider.url
+	    }))
+	})
+
+	this.client?.on('system.login.device', async (device) => {
+	    this.conn?.write(c.j({
+		"status": c.R_ERR_UNKNOWN,
+		"login":  c.L_DEVICE,
+		"url":    device.url
+	    }))
 	})
 
 	/* 登录 */
@@ -562,6 +596,8 @@ class AxonClient {
 	    console.log("JSON 解析失败： ", e)
 	    return
 	}
+
+	// console.log(d)
 
 	this.queue.add(() => this.callTable[d.command].bind(this)(d))
 	    .catch((e) => { console.log("命令调用失败：", e) })

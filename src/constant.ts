@@ -23,6 +23,7 @@ export const MOTD = {
 
 /* 函数别名，JSON 转换 */
 export const j = (some: object) => {
+    // console.log(some)
     return JSON.stringify(some)
 }
 
@@ -48,4 +49,11 @@ export const E_GROUP_INCREASE     = 5
 export const E_GROUP_DECREASE     = 6
 export const E_GROUP_IMG_MESSAGE  = 7
 export const E_FRIEND_IMG_MESSAGE = 8
+export const E_GROUP_RECALL       = 9
+
+/* 登录错误类型 */
+export const L_DEVICE = 0
+export const L_ERROR  = 1
+export const L_SLIDER = 2
+export const L_QRCODE = 3
 
