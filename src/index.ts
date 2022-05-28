@@ -323,7 +323,7 @@ class AxonClient {
 	    this.conn.write(c.j({
 		"status": c.R_ERR_UNKNOWN,
 		"login":  c.L_QRCODE,
-		"code":   qr.image.toString('base64')
+		"data":   qr.image.toString('base64')
 	    }))
 	})
 
