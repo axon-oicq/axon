@@ -2,12 +2,63 @@ import * as c   from './constant'
 import * as i   from './interface'
 import * as net from 'net'
 
+import commandLineArgs from 'command-line-args'
+import commandLineUsage from 'command-line-usage'
+
 import Queue from 'promise-queue'
 import { Client, createClient, FriendInfo, GroupInviteEvent, GroupMessageEvent,
 	 MemberDecreaseEvent, MemberIncreaseEvent, MemberInfo, PrivateMessageEvent,
          MessageElem, 
          segment,
          GroupRecallEvent} from 'oicq'
+
+const commandOptions = [
+    { name: 'host', alias: 'a', type: String,
+      description: "Specify the address that axon will listen on. Default to localhost."},
+    { name: 'port', alias: 'p', type: Number,
+      description: "Specify the port that axon will listen on. Default to 6666."},
+    { name: 'data-dir', alias: 'c', type: String,
+      description: "Specify where to store the account info. Default to the same directory of the executable."},
+    { name: 'debug', alias: 'd', type: Boolean,
+      description: "Show the debug infomation."},
+    { name: 'daemon', alias: 'D', type: Boolean,
+      description: "Deamonize the process."},
+    { name: 'help', alias: 'h', type: Boolean,
+      description: "Print this command usage." },
+]
+
+const options = Object.assign({
+    'data-dir': c.data_dir,
+    'daemon': false,
+    'help': false,
+    'debug': false,
+    'host': c.HOST,
+    'port': c.PORT,
+}, commandLineArgs(commandOptions))
+
+if (options.help) {
+    console.log(commandLineUsage([
+	{
+	    header: "Axon OICQ Wrapper",
+	    content: "A socket server wrapper for oicq",
+	},
+	{
+	    header: "Options",
+	    optionList: commandOptions,
+	}
+    ]))
+    process.exit(0)
+}
+
+if (options.daemon)
+    require('daemonize-process')()
+
+/* 函数别名，JSON 转换 */
+const j = (some: object) => {
+    if (options.debug)
+	console.log("OUT: ", some)
+    return JSON.stringify(some)
+}
 
 function resolveAcctList(l: Array<MemberInfo | FriendInfo>): string[] {
     let allNames: string[] = [], dupNames: string[] = []
@@ -171,7 +222,7 @@ class AxonClient {
 
 	e.message.forEach(msg => {   
 	    if (msg.type === "poke") {
-		this.conn.write(c.j({
+		this.conn.write(j({
 		    "status": c.R_STAT_EVENT,
 		    "type"  : c.E_FRIEND_ATTENTION,
 		    "sender": this.altNameFromId(e.sender.user_id),
@@ -180,7 +231,7 @@ class AxonClient {
 	    }
 
 	    if ((msg.type == "image" || msg.type == "flash") && msg.url) {
-		this.conn.write(c.j({
+		this.conn.write(j({
 		    "status": c.R_STAT_EVENT,
 		    "type"  : c.E_FRIEND_IMG_MESSAGE,
 		    "sender": this.altNameFromId(e.sender.user_id),
@@ -195,7 +246,7 @@ class AxonClient {
 	if (text == '' || text == ' ')
 	    return
 
-	this.conn.write(c.j({
+	this.conn.write(j({
 	    "status": c.R_STAT_EVENT,
 	    "type"  : c.E_FRIEND_MESSAGE,
 	    "sender": this.altNameFromId(e.sender.user_id),
@@ -208,12 +259,10 @@ class AxonClient {
 	let text: string = '';
 
 	e.message.forEach(msg => {
-	    console.log(msg)
-
 	    if ((msg.type == "image" || msg.type == "flash") && msg.url) {
 		if (! msg.url) return
 
-		this.conn.write(c.j({
+		this.conn.write(j({
 		    "status": c.R_STAT_EVENT,
 		    "type"  : c.E_GROUP_IMG_MESSAGE,
 		    "sender": this.altNameFromId(e.sender.user_id),
@@ -229,7 +278,7 @@ class AxonClient {
 	if (text == '' || text == ' ')
 	    return
 
-	this.conn.write(c.j({
+	this.conn.write(j({
 	    "status": c.R_STAT_EVENT,
 	    "type"  : c.E_GROUP_MESSAGE,
 	    "sender": this.altNameFromId(e.sender.user_id),
@@ -242,7 +291,7 @@ class AxonClient {
 
     async _eGroupInvite(e: GroupInviteEvent) {
 	this.invitation = e;
-	this.conn.write(c.j({
+	this.conn.write(j({
 	    "status": c.R_STAT_EVENT,
 	    "type"  : c.E_GROUP_INVITE,
 	    "id"    : e.group_id,
@@ -259,7 +308,7 @@ class AxonClient {
 	/* 将新成员加入到信息表 */
 	this.acctInfoTable.push(member)
 
-	this.conn.write(c.j({
+	this.conn.write(j({
 	    "status": c.R_STAT_EVENT,
 	    "type"  : c.E_GROUP_INCREASE,
 	    "name"  : this.altNameFromInfo(member),
@@ -268,7 +317,7 @@ class AxonClient {
     }
 
     async _eGroupDecrease(e: MemberDecreaseEvent) {
-	this.conn.write(c.j({
+	this.conn.write(j({
 	    "status": c.R_STAT_EVENT,
 	    "type"  : c.E_GROUP_INCREASE,
 	    "name"  : this.altNameFromId(e.user_id),
@@ -277,7 +326,7 @@ class AxonClient {
     }
 
     async _eGroupRecall(e: GroupRecallEvent) {
-	this.conn.write(c.j({
+	this.conn.write(j({
 	    "status": c.R_STAT_EVENT,
 	    "type"  : c.E_GROUP_RECALL,
 	    "name": this.altNameFromId(e.user_id),
@@ -312,7 +361,7 @@ class AxonClient {
 	})
 
 	this.client?.on('system.login.error', async (err) => {
-	    this.conn.write(c.j({
+	    this.conn.write(j({
 		"status":  c.R_ERR_UNKNOWN,
 		"login":   c.L_ERROR,
 		"message": err.message
@@ -320,7 +369,7 @@ class AxonClient {
 	})
 
 	this.client?.on('system.login.qrcode', async (qr) => {
-	    this.conn.write(c.j({
+	    this.conn.write(j({
 		"status": c.R_ERR_UNKNOWN,
 		"login":  c.L_QRCODE,
 		"data":   qr.image.toString('base64')
@@ -328,7 +377,7 @@ class AxonClient {
 	})
 
 	this.client?.on('system.login.slider', async (slider) => {
-	    this.conn.write(c.j({
+	    this.conn.write(j({
 		"status": c.R_ERR_UNKNOWN,
 		"login":  c.L_SLIDER,
 		"url":    slider.url
@@ -336,7 +385,7 @@ class AxonClient {
 	})
 
 	this.client?.on('system.login.device', async (device) => {
-	    this.conn?.write(c.j({
+	    this.conn?.write(j({
 		"status": c.R_ERR_UNKNOWN,
 		"login":  c.L_DEVICE,
 		"url":    device.url
@@ -356,7 +405,7 @@ class AxonClient {
 	    await this.client.logout(false)
 	/* 初始化新的 Client */
 	this.client = createClient(Number(info.uin), {
-	    data_dir: c.data_dir, platform: Number(info.platform)
+	    data_dir: options['data-dir'], platform: Number(info.platform)
 	})
 	this.conn.write(c.R_OK_J)
     }
@@ -372,7 +421,6 @@ class AxonClient {
     }
 
     async _usendImgCb (info: i.USEND_IMG_INFO) {
-	console.log(info.data)
 	this.client?.pickFriend(this.idFromAltName(info.id))
 	    .sendMsg(segment.image(Buffer.from(info.data, 'base64')))
 	    .then(() => {
@@ -421,7 +469,7 @@ class AxonClient {
 	if (!groupInfo)
 	    this.conn.write(c.R_ERR_NON_EXIST_J)
 	else
-	    this.conn.write(c.j({
+	    this.conn.write(j({
 		"status": c.R_OK,
 		"name": groupInfo.group_name,
 	    }))
@@ -449,7 +497,7 @@ class AxonClient {
 	    }
 	}
 
-	this.conn.write(c.j({
+	this.conn.write(j({
 	    "status": 0,
 	    "list"  : nameList,
 	    "owner" : owner,
@@ -468,7 +516,7 @@ class AxonClient {
 	for (let friend of friendList.values())
 	    nameList.push(this.altNameFromInfo(friend))
 
-	this.conn.write(c.j({
+	this.conn.write(j({
 	    "status": 0,
 	    "list"  : nameList,
 	}))
@@ -489,7 +537,7 @@ class AxonClient {
 	    idList.push(group.group_id)
 	}
 
-	this.conn.write(c.j({
+	this.conn.write(j({
 	    "status"  : 0,
 	    "namelist": nameList,
 	    "idlist"  : idList,
@@ -497,7 +545,7 @@ class AxonClient {
     }
 
     async _whoamiCb (_: i.WHOAMI_INFO) {
-	this.conn.write(c.j({
+	this.conn.write(j({
 	    "status": 0,
 	    "name"  : this.client?.nickname,
 	}))
@@ -553,7 +601,7 @@ class AxonClient {
 	    }
 
 	try {
-	    this.conn.write(c.j({
+	    this.conn.write(j({
 		"status": c.R_OK,
 		"nickname": results[0].nickname,
 		"id": results[0].user_id.toString(),
@@ -597,7 +645,8 @@ class AxonClient {
 	    return
 	}
 
-	// console.log(d)
+	if (options.debug)
+	    console.log("IN: ", d)
 
 	this.queue.add(() => this.callTable[d.command].bind(this)(d))
 	    .catch((e) => { console.log("命令调用失败：", e) })
@@ -620,4 +669,4 @@ class AxonClient {
 }
 
 const server = net.createServer((sock) => { new AxonClient(sock) })
-server.listen(c.PORT, c.HOST)
+server.listen(options.port, options.host)

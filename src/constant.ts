@@ -22,7 +22,7 @@ export const MOTD = {
 }
 
 /* 函数别名，JSON 转换 */
-export const j = (some: object) => {
+const j = (some: object) => {
     // console.log(some)
     return JSON.stringify(some)
 }
