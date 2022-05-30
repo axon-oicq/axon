@@ -16,7 +16,7 @@ const commandOptions = [
     { name: 'host', alias: 'a', type: String,
       description: "Specify the address that axon will listen on. Default to localhost."},
     { name: 'port', alias: 'p', type: Number,
-      description: "Specify the port that axon will listen on. Default to 6666."},
+      description: "Specify the port that axon will listen on. Default to 9999."},
     { name: 'data-dir', alias: 'c', type: String,
       description: "Specify where to store the account info. Default to the same directory of the executable."},
     { name: 'debug', alias: 'd', type: Boolean,
