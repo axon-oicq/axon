@@ -507,18 +507,22 @@ class AxonClient {
 
     async _flistCb (_: i.FLIST_INFO) {
 	let nameList = [], friendList = this.client?.getFriendList()
+	let idList: number[] = [];
 
 	if (!friendList) {
 	    this.conn.write(c.R_ERR_NON_EXIST_J)
 	    return
 	}
 
-	for (let friend of friendList.values())
+	for (let friend of friendList.values()) {
 	    nameList.push(this.altNameFromInfo(friend))
+	    idList.push(friend.user_id)
+	}
 
 	this.conn.write(j({
 	    "status": 0,
 	    "list"  : nameList,
+	    "idlist": idList,
 	}))
 	    
     }
