@@ -2,6 +2,9 @@ import * as c   from './constant'
 import * as i   from './interface'
 import * as net from 'net'
 
+import * as ndjson from 'ndjson'
+
+import axios from 'axios'
 import commandLineArgs from 'command-line-args'
 import commandLineUsage from 'command-line-usage'
 
@@ -56,8 +59,8 @@ if (options.daemon)
 /* 函数别名，JSON 转换 */
 const j = (some: object) => {
     if (options.debug)
-	console.log("OUT: ", some)
-    return JSON.stringify(some)
+	console.log(some)
+    return JSON.stringify(some).concat("\n")
 }
 
 function resolveAcctList(l: Array<MemberInfo | FriendInfo>): string[] {
@@ -113,8 +116,11 @@ class AxonClient {
 
     queue = new Queue(1, Infinity)
 
-    buffer: string = ''
+    buffers: Buffer[] = []
     isReading: boolean = false
+    bytes_read = 0
+    bytes_need = 0
+    bytes_digi = 0
 
     /* 命令调用表 */
     callTable: any = {
@@ -468,11 +474,15 @@ class AxonClient {
 
 	if (!groupInfo)
 	    this.conn.write(c.R_ERR_NON_EXIST_J)
-	else
-	    this.conn.write(j({
-		"status": c.R_OK,
-		"name": groupInfo.group_name,
-	    }))
+
+	const response = await axios.get(`https://qinfo.clt.qq.com/cgi-bin/qun_info/get_group_info_all?gc=${groupInfo?.group_id}&bkn=${this.client?.bkn}`,
+					 { headers: { 'Cookie': this.client?.cookies[''] || "" } })
+	
+	this.conn.write(j({
+	    "status": c.R_OK,
+	    "name": groupInfo?.group_name,
+	    "topic": response.data['gIntro'] || "",
+	}))
     }
 
     async _gmlistCb (info: i.GMLIST_INFO) {
@@ -619,40 +629,11 @@ class AxonClient {
 	}
     }
 
-    handleData (data: Buffer) {
-	let text = data.toString()
-	let d: any, skip = false
-	if (!text.endsWith('}') && text.startsWith('{')
-	    && !this.isReading) {
-	    this.isReading = true
-	    this.buffer = data.toString()
-	    return
-
-	} else if (!text.endsWith('}') && this.isReading) {
-	    this.buffer = this.buffer
-		.concat(data.toString())
-	    return
-	} else if (text.endsWith('}') && this.isReading) {
-	    this.buffer = this.buffer
-		.concat(data.toString())
-	    this.isReading = false
-	    skip = true
-	}
-	
-	try {
-	    if (!skip)
-		d = JSON.parse(text)
-	    else
-		d = JSON.parse(this.buffer)
-	} catch (e) {
-	    console.log("JSON 解析失败： ", e)
-	    return
-	}
-
+    handleData (data: any) {
 	if (options.debug)
-	    console.log("IN: ", d)
+	    console.log("IN: ", data)
 
-	this.queue.add(() => this.callTable[d.command].bind(this)(d))
+	this.queue.add(() => this.callTable[data.command].bind(this)(data))
 	    .catch((e) => { console.log("命令调用失败：", e) })
     }
 
@@ -662,7 +643,8 @@ class AxonClient {
 
     constructor (conn: net.Socket) {
 	this.conn = conn
-	conn.on('data', this.handleData.bind(this))
+	conn.pipe(ndjson.parse())
+	    .on('data', this.handleData.bind(this))
 	conn.on('close', async () => {
 	    if (this.client?.isOnline)
 		await this.client?.logout(false)

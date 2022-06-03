@@ -23,8 +23,7 @@ export const MOTD = {
 
 /* 函数别名，JSON 转换 */
 const j = (some: object) => {
-    // console.log(some)
-    return JSON.stringify(some)
+    return JSON.stringify(some).concat("\n")
 }
 
 /* 返回状态类型 */ 
