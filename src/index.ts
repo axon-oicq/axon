@@ -165,6 +165,15 @@ class AxonClient {
     }
     /* 从 ID 获取替代昵称 */
     altNameFromId(id: string | number): string {
+	let friendList = this.client?.getFriendList()
+	if (!friendList) return "未知用户"
+
+	if (friendList.has(Number(id))) {
+	    let friendInfo = friendList.get(Number(id))
+	    if (!friendInfo) return "未知用户"
+	    return this.altNameFromInfo(friendInfo)
+	}
+	
 	for (let info of this.acctInfoTable) {
 	    if (id == info.user_id)
 		return this.altNameFromInfo(info)
@@ -487,17 +496,28 @@ class AxonClient {
 
     async _gmlistCb (info: i.GMLIST_INFO) {
 	let memberList = await this.client?.getGroupMemberList(Number(info.id))
-	let nameList = [], adminList = [], owner
+	let friendList = this.client?.getFriendList()
+	let nameList = [], adminList = [], owner, altName
 
-	if (!memberList) {
+	if (!memberList || !friendList) {
 	    this.conn.write(c.R_ERR_NON_EXIST_J)
 	    return
 	}
 
 	for (let member of memberList.values()) {
-	    const altName = this.altNameFromInfo(member)
-
+	    if (friendList.has(member.user_id)) {
+		let friendInfo = friendList.get(member.user_id)
+		if (!friendInfo) {
+		    this.conn.write(c.R_ERR_NON_EXIST_J)
+		    return
+		}
+		altName = this.altNameFromInfo(friendInfo)
+	    } else {
+		altName = this.altNameFromInfo(member)
+	    }
+	    
 	    nameList.push(altName)
+	    
 	    switch (member.role) {
 		case "owner":
 		    owner = altName
@@ -548,7 +568,7 @@ class AxonClient {
 
 	for (let group of iter) {
 	    nameList.push(group.group_name)
-	    idList.push(group.group_id)
+	    idList.push(group.group_id.toString())
 	}
 
 	this.conn.write(j({
