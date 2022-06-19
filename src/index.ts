@@ -8,12 +8,10 @@ import axios from 'axios'
 import commandLineArgs from 'command-line-args'
 import commandLineUsage from 'command-line-usage'
 
-import Queue from 'promise-queue'
+import AsyncLock from 'async-lock'
 import { Client, createClient, FriendInfo, GroupInviteEvent, GroupMessageEvent,
 	 MemberDecreaseEvent, MemberIncreaseEvent, MemberInfo, PrivateMessageEvent,
-         MessageElem, 
-         segment,
-         GroupRecallEvent} from 'oicq'
+         MessageElem, segment, GroupRecallEvent, PrivateMessage, GroupMessage } from 'oicq'
 
 const commandOptions = [
     { name: 'host', alias: 'a', type: String,
@@ -63,6 +61,10 @@ const j = (some: object) => {
     return JSON.stringify(some).concat("\n")
 }
 
+function genName(name: string, id: number): string {
+    return name.concat('#').concat(id.toString().slice(-4))
+}
+
 function resolveAcctList(l: Array<MemberInfo | FriendInfo>): string[] {
     let allNames: string[] = [], dupNames: string[] = []
     l.forEach((e) => {
@@ -104,23 +106,29 @@ function stripRealName(a: string): string {
     return a.includes('#') ? a.split('#').slice(0, -1).join('#') : a
 }
 
+function verifyAltName(a:string): boolean {
+    if (a.slice(-1) < '0' || a.slice(-1) > '9') return false
+    if (a.slice(-2, -1) < '0' || a.slice(-2, -1) > '9') return false
+    if (a.slice(-3, -2) < '0' || a.slice(-3, -2) > '9') return false
+    if (a.slice(-4, -3) < '0' || a.slice(-4, -3) > '9') return false
+    return true
+}
+
 class AxonClient {
     /* 帐号信息表与昵称重复表 */
-    acctInfoTable: Array<MemberInfo | FriendInfo> = []
-    nickDupTable:  string[]                       = []
- 
+    // acctInfoTable: Array<MemberInfo | FriendInfo> = []
+    chatNickDupTable: Map<number, string[]> = new Map()
+    dmNickDupTable: string[] = []
+    
     client: Client | null = null
     conn: net.Socket
 
     invitation: GroupInviteEvent | null = null
 
-    queue = new Queue(1, Infinity)
+    lock = new AsyncLock()
 
     buffers: Buffer[] = []
     isReading: boolean = false
-    bytes_read = 0
-    bytes_need = 0
-    bytes_digi = 0
 
     /* 命令调用表 */
     callTable: any = {
@@ -141,98 +149,86 @@ class AxonClient {
 	"GOAHEAD":     this._goAheadCb,
     }
 
-    /* 从替代昵称获取 ID */
-    idFromAltName(altName: string): number {
-	for (let info of this.acctInfoTable) {
-	    if ("card" in info) {
-		if (info.card !== '') {
-		    if (info.card == altName)
-			return info.user_id
-		    else if (info.user_id.toString().endsWith(altName.split('#').slice(-1)[0])
-			&& stripRealName(altName) === info.card)
-			return info.user_id
-		}
-	    }
-
-	    if (info.nickname == altName)
-		return info.user_id
-	    else if (info.user_id.toString().endsWith(altName.split('#').slice(-1)[0])
-		&& stripRealName(altName) === info.nickname)
-		return info.user_id
-	}
-
-	return -1
-    }
-    /* 从 ID 获取替代昵称 */
-    altNameFromId(id: string | number): string {
-	let friendList = this.client?.getFriendList()
-	if (!friendList) return "未知用户"
-
-	if (friendList.has(Number(id))) {
-	    let friendInfo = friendList.get(Number(id))
-	    if (!friendInfo) return "未知用户"
-	    return this.altNameFromInfo(friendInfo)
-	}
+    /* 构建单个群聊的群员昵称重复表 */
+    async buildChatNickDupTable(gid: number, no_cache = false) {
+	console.log(this.chatNickDupTable)
+	if (!no_cache && this.chatNickDupTable.has(gid)) return
 	
-	for (let info of this.acctInfoTable) {
-	    if (id == info.user_id)
-		return this.altNameFromInfo(info)
-	}
-	return "未知用户"
-    }
-    /* 从信息获取替代昵称 */
-    altNameFromInfo(info: MemberInfo | FriendInfo): string {
-	if ("card" in info) {
-	    if (info.card !== '') {
-		if (this.nickDupTable.includes(info.card))
-		    return info.card.concat('#')
-			.concat(info.user_id.toString().slice(-4))
-		else
-		    return info.card
-	    }
-	}
+	let nickDupList: string[] = []
+	console.log("GET GROUP MEMBER LIST!!!")
+	let chatMemberList = await this.client?.getGroupMemberList(gid, no_cache)
+	let chatMemberListIter = chatMemberList?.values()
 
-	if (this.nickDupTable.includes(info.nickname))
-	    return info.nickname.concat('#')
-		.concat(info.user_id.toString().slice(-4))
-	else
-	    return info.nickname
+	if (!chatMemberListIter) return
+	
+	this.chatNickDupTable.delete(gid)
+	nickDupList = resolveAcctList(Array.from(chatMemberListIter))
+	this.chatNickDupTable.set(gid, nickDupList)
     }
 
-    async updateTable() {
-	let iter = this.client?.gl.values()
-	/* 初始化表（考虑到可能会多次调用） */
-	this.nickDupTable =  []
-	this.acctInfoTable = []
-
-	let promises = []
+    /* 构建好友昵称重复表 */
+    buildDmNickDupTable() {
+	if (this.dmNickDupTable.length != 0)
+	    return
+	
+	const iter = this.client?.fl.values()
 	if (!iter) return
-	for (let info of iter)
-	    promises.push(this.client?.getGroupMemberList(info.group_id))
-	/* 从群列表聊生成表 */
-	const results = await Promise.all(promises)
-	for (let r in results) {
-	    const memberList = results[r]?.values()
-	    if (!memberList) continue
-	    const memberListArr = Array.from(memberList);
-	    this.nickDupTable = this.nickDupTable
-		.concat(resolveAcctList(memberListArr))
-	    this.acctInfoTable = this.acctInfoTable
-		.concat(Array.from(memberListArr))
-	}
 
-	/* 从好友列表补全表 */
-	if (!this.client?.fl) return
-	let friendList = this.client?.fl.values()
-	this.acctInfoTable = this.acctInfoTable
-	    .concat(Array.from(friendList))
-	this.nickDupTable = this.nickDupTable
-	    .concat(resolveAcctList(Array.from(friendList)))
-
-	this.conn.write(c.R_OK_J);
+	this.dmNickDupTable = resolveAcctList(Array.from(iter))
+	this.dmNickDupTable.push('')
     }
 
-    async _ePrivateMessage(e: PrivateMessageEvent) {
+    /* 从好友信息获取替代昵称 */
+    buildFriendAltName(k: number | FriendInfo | PrivateMessage["sender"]) {
+	let friendInfoList = this.client?.fl
+	let dupName
+
+	this.buildDmNickDupTable()
+
+	if (typeof k == "number") {
+	    let name = friendInfoList?.get(k)?.nickname
+	    if (!name) return '幽灵用户'
+	    dupName = name
+	} else
+	    dupName = k.nickname
+
+	if (this.dmNickDupTable.includes(dupName)) {
+	    if (typeof k == "number")
+		return genName(dupName, k)
+	    else
+		return genName(dupName, k.user_id)
+	}
+
+	return dupName
+    }
+
+    /* 从群员信息获取替代昵称 */
+    async buildChatMemberAltName(gid: number, k: GroupMessage["sender"] | MemberInfo) {
+	await this.lock.acquire('retriveGroupInfo', () => this.buildChatNickDupTable(gid))
+
+	const dupNameList = this.chatNickDupTable.get(gid)
+	if (dupNameList === undefined) return "错误用户"
+
+	if (dupNameList.includes(k.card ? k.card : k.nickname))
+	    return genName(k.card ? k.card : k.nickname, k.user_id)
+	else
+	    return k.card ? k.card : k.nickname
+    }
+
+    /* 从替代昵称获取好友信息 */
+    buildAltNameFriend(k: string) {
+	const isDup = verifyAltName(k)
+	const iter = this.client?.fl.values()
+	if (!iter) return
+	
+	for (const friend of iter) {
+	    if (isDup && friend.user_id.toString().endsWith(k.slice(-4))
+		&& friend.remark === stripRealName(k)) return friend
+	    else if (!isDup && friend.remark === k) return friend
+	}
+    }
+    
+    async _ePrivateMessage (e: PrivateMessageEvent) {
 	let text: string = ''
 
 	e.message.forEach(msg => {   
@@ -240,7 +236,7 @@ class AxonClient {
 		this.conn.write(j({
 		    "status": c.R_STAT_EVENT,
 		    "type"  : c.E_FRIEND_ATTENTION,
-		    "sender": this.altNameFromId(e.sender.user_id),
+		    "sender": this.buildFriendAltName(e.sender),
 		    "time"  : e.time,
 		})); return
 	    }
@@ -249,7 +245,7 @@ class AxonClient {
 		this.conn.write(j({
 		    "status": c.R_STAT_EVENT,
 		    "type"  : c.E_FRIEND_IMG_MESSAGE,
-		    "sender": this.altNameFromId(e.sender.user_id),
+		    "sender": this.buildFriendAltName(e.sender),
 		    "time"  : e.time,
 		    "url"   : msg.url,
 		})); return
@@ -264,7 +260,7 @@ class AxonClient {
 	this.conn.write(j({
 	    "status": c.R_STAT_EVENT,
 	    "type"  : c.E_FRIEND_MESSAGE,
-	    "sender": this.altNameFromId(e.sender.user_id),
+	    "sender": this.buildFriendAltName(e.sender),
 	    "time"  : e.time,
 	    "text"  : text,
 	}))
@@ -273,14 +269,14 @@ class AxonClient {
     async _eGroupMessage(e: GroupMessageEvent) {
 	let text: string = '';
 
-	e.message.forEach(msg => {
+	e.message.forEach(async msg => {
 	    if ((msg.type == "image" || msg.type == "flash") && msg.url) {
 		if (! msg.url) return
 
 		this.conn.write(j({
 		    "status": c.R_STAT_EVENT,
 		    "type"  : c.E_GROUP_IMG_MESSAGE,
-		    "sender": this.altNameFromId(e.sender.user_id),
+		    "sender": await this.buildChatMemberAltName(e.group_id, e.sender),
 		    "name"  : e.group_name,
 		    "time"  : e.time,
 		    "id"    : e.group_id,
@@ -296,7 +292,7 @@ class AxonClient {
 	this.conn.write(j({
 	    "status": c.R_STAT_EVENT,
 	    "type"  : c.E_GROUP_MESSAGE,
-	    "sender": this.altNameFromId(e.sender.user_id),
+	    "sender": await this.buildChatMemberAltName(e.group_id, e.sender),
 	    "time"  : e.time,
 	    "text"  : text,
 	    "name"  : e.group_name,
@@ -311,7 +307,7 @@ class AxonClient {
 	    "type"  : c.E_GROUP_INVITE,
 	    "id"    : e.group_id,
 	    "name"  : e.group_name,
-	    "sender": this.altNameFromId(e.user_id),
+	    "sender": "用户" /* 替代昵称 */,
 	}))
     }
 
@@ -321,12 +317,12 @@ class AxonClient {
 	if (!member) return
 
 	/* 将新成员加入到信息表 */
-	this.acctInfoTable.push(member)
+	this.buildChatNickDupTable(e.group_id, true)
 
 	this.conn.write(j({
 	    "status": c.R_STAT_EVENT,
 	    "type"  : c.E_GROUP_INCREASE,
-	    "name"  : this.altNameFromInfo(member),
+	    "name"  : this.buildChatMemberAltName(e.group_id, member),
 	    "id"    : e.group_id,
 	}))
     }
@@ -334,33 +330,43 @@ class AxonClient {
     async _eGroupDecrease(e: MemberDecreaseEvent) {
 	this.conn.write(j({
 	    "status": c.R_STAT_EVENT,
-	    "type"  : c.E_GROUP_INCREASE,
-	    "name"  : this.altNameFromId(e.user_id),
+	    "type"  : c.E_GROUP_DECREASE,
+	    "name"  : e.member
+		? this.buildChatMemberAltName(e.group_id, e.member)
+		: "未知用户",
 	    "id"    : e.group_id,
 	}))
     }
 
     async _eGroupRecall(e: GroupRecallEvent) {
+	let groupMemberList = await this.client?.getGroupMemberList(e.group_id)
+	let member = groupMemberList?.get(e.user_id)
+	
+	if (!member) {
+	    this.conn.write(c.R_ERR_NON_EXIST_J)
+	    return
+	}
+	
 	this.conn.write(j({
 	    "status": c.R_STAT_EVENT,
 	    "type"  : c.E_GROUP_RECALL,
-	    "name": this.altNameFromId(e.user_id),
+	    "name": this.buildChatMemberAltName(e.group_id, member),
 	    "id"    : e.group_id
 	}))
     }
 
     bindEventCb() {
-	this.client?.on('message.private',       (e) => this.queue.add(() =>
+	this.client?.on('message.private',       (e) => this.lock.acquire('cmd', () =>
 	    this._ePrivateMessage.bind(this)(e)))
-	this.client?.on('message.group',         (e) => this.queue.add(() =>
+	this.client?.on('message.group',         (e) => this.lock.acquire('cmd', () =>
 	    this._eGroupMessage.bind(this)(e)))
-	this.client?.on('request.group.invite',  (e) => this.queue.add(() =>
+	this.client?.on('request.group.invite',  (e) => this.lock.acquire('cmd', () =>
 	    this._eGroupInvite.bind(this)(e)))
-	this.client?.on('notice.group.increase', (e) => this.queue.add(() =>
+	this.client?.on('notice.group.increase', (e) => this.lock.acquire('cmd', () =>
 	    this._eGroupIncrease.bind(this)(e)))
-	this.client?.on('notice.group.decrease', (e) => this.queue.add(() =>
+	this.client?.on('notice.group.decrease', (e) => this.lock.acquire('cmd', () =>
 	    this._eGroupDecrease.bind(this)(e)))
-	this.client?.on('notice.group.recall',   (e) => this.queue.add(() =>
+	this.client?.on('notice.group.recall',   (e) => this.lock.acquire('cmd', () =>
 	    this._eGroupRecall.bind(this)(e)))
     }
 
@@ -371,7 +377,7 @@ class AxonClient {
     async _loginCb (info: i.LOGIN_INFO) {
 	/* 添加回调 */
 	this.client?.on('system.online', async () => {
-	    await this.updateTable()
+	    this.conn.write(c.R_OK_J)
 	    this.bindEventCb()
 	})
 
@@ -426,7 +432,13 @@ class AxonClient {
     }
 
     async _usendCb (info: i.USEND_INFO) {
-	this.client?.pickFriend(this.idFromAltName(info.id))
+	const friendInfo = this.buildAltNameFriend(info.id)
+	if (!friendInfo) {
+	    this.conn.write(c.R_ERR_NON_EXIST_J)
+	    return
+	}
+	
+	this.client?.pickFriend(friendInfo.user_id)
 	    .sendMsg(info.message).then(() => {
 		this.conn.write(c.R_OK_J)
 	    }).catch((e) => {
@@ -436,7 +448,13 @@ class AxonClient {
     }
 
     async _usendImgCb (info: i.USEND_IMG_INFO) {
-	this.client?.pickFriend(this.idFromAltName(info.id))
+	const friendInfo = this.buildAltNameFriend(info.id)
+	if (!friendInfo) {
+	    this.conn.write(c.R_ERR_NON_EXIST_J)
+	    return
+	}
+	
+	this.client?.pickFriend(friendInfo.user_id)
 	    .sendMsg(segment.image(Buffer.from(info.data, 'base64')))
 	    .then(() => {
 		this.conn.write(c.R_OK_J)
@@ -469,7 +487,13 @@ class AxonClient {
 
 
     async _usendShakeCb (info: i.USEND_SHAKE_INFO) {
-	this.client?.pickFriend(this.idFromAltName(info.id))
+	const friendInfo = this.buildAltNameFriend(info.id)
+	if (!friendInfo) {
+	    this.conn.write(c.R_ERR_NON_EXIST_J)
+	    return
+	}
+	
+	this.client?.pickFriend(friendInfo.user_id)
 	    .sendMsg(segment.poke(0)).then(() => {
 		this.conn.write(c.R_OK_J)
 	    }).catch((e) => {
@@ -511,9 +535,9 @@ class AxonClient {
 		    this.conn.write(c.R_ERR_NON_EXIST_J)
 		    return
 		}
-		altName = this.altNameFromInfo(friendInfo)
+		altName = this.buildFriendAltName(friendInfo)
 	    } else {
-		altName = this.altNameFromInfo(member)
+		altName = await this.buildChatMemberAltName(member.group_id, member)
 	    }
 	    
 	    nameList.push(altName)
@@ -536,7 +560,7 @@ class AxonClient {
     }
 
     async _flistCb (_: i.FLIST_INFO) {
-	let nameList = [], friendList = this.client?.getFriendList()
+	let nameList = [], friendList = this.client?.fl
 	let idList: number[] = [];
 
 	if (!friendList) {
@@ -545,7 +569,7 @@ class AxonClient {
 	}
 
 	for (let friend of friendList.values()) {
-	    nameList.push(this.altNameFromInfo(friend))
+	    nameList.push(this.buildFriendAltName(friend))
 	    idList.push(friend.user_id)
 	}
 
@@ -602,58 +626,60 @@ class AxonClient {
 	}
     }
 
-    async _lookupCb (info: i.LOOKUP_INFO) {
-	let results: (FriendInfo | MemberInfo)[] = [];
+    async _lookupCb (info: i.LOOKUP_INFO) {}
+    
+    // async _lookupCb (info: i.LOOKUP_INFO) {
+    // 	let results: (FriendInfo | MemberInfo)[] = [];
 
-	for (let ii of this.acctInfoTable) {
-	    if ("card" in ii) {
-		if (ii.card !== '') {
-		    if (ii.card == info.nickname)
-			results.push(ii)
-		    else if (ii.user_id.toString().endsWith(info.nickname.split('#').slice(-1)[0])
-			&& stripRealName(info.nickname)  === ii.card)
-			results.push(ii)
+    // 	for (let ii of this.acctInfoTable) {
+    // 	    if ("card" in ii) {
+    // 		if (ii.card !== '') {
+    // 		    if (ii.card == info.nickname)
+    // 			results.push(ii)
+    // 		    else if (ii.user_id.toString().endsWith(info.nickname.split('#').slice(-1)[0])
+    // 			&& stripRealName(info.nickname)  === ii.card)
+    // 			results.push(ii)
 
-		    continue
-		}
-	    }
+    // 		    continue
+    // 		}
+    // 	    }
 
-	    if (info.nickname == ii.nickname)
-		results.push(ii)
-	    else if (ii.user_id.toString().endsWith(info.nickname.split('#').slice(-1)[0])
-		&& stripRealName(info.nickname) === ii.nickname)
-		results.push(ii)
-	}
+    // 	    if (info.nickname == ii.nickname)
+    // 		results.push(ii)
+    // 	    else if (ii.user_id.toString().endsWith(info.nickname.split('#').slice(-1)[0])
+    // 		&& stripRealName(info.nickname) === ii.nickname)
+    // 		results.push(ii)
+    // 	}
 
-	let joined_group: string[] = [];
+    // 	let joined_group: string[] = [];
 
-	for (let ii of results)
-	    if ("group_id" in ii) {
-		const g = this.client?.gl.get(ii.group_id)
-		if (!g) return
-		joined_group.push(`${g.group_name}[${g.group_id}]`)
-	    }
+    // 	for (let ii of results)
+    // 	    if ("group_id" in ii) {
+    // 		const g = this.client?.gl.get(ii.group_id)
+    // 		if (!g) return
+    // 		joined_group.push(`${g.group_name}[${g.group_id}]`)
+    // 	    }
 
-	try {
-	    this.conn.write(j({
-		"status": c.R_OK,
-		"nickname": results[0].nickname,
-		"id": results[0].user_id.toString(),
-		"card": stripRealName(info.nickname) ,
-		"relation": joined_group.join(', '),
-		"sex": results[0].sex,
-	    }))
-	} catch (e) {
-	    console.log(e)
-	    this.conn.write(c.R_ERR_NON_EXIST_J);
-	}
-    }
-
+    // 	try {
+    // 	    this.conn.write(j({
+    // 		"status": c.R_OK,
+    // 		"nickname": results[0].nickname,
+    // 		"id": results[0].user_id.toString(),
+    // 		"card": stripRealName(info.nickname) ,
+    // 		"relation": joined_group.join(', '),
+    // 		"sex": results[0].sex,
+    // 	    }))
+    // 	} catch (e) {
+    // 	    console.log(e)
+    // 	    this.conn.write(c.R_ERR_NON_EXIST_J);
+    // 	}
+    // }
+    
     handleData (data: any) {
 	if (options.debug)
 	    console.log("IN: ", data)
 
-	this.queue.add(() => this.callTable[data.command].bind(this)(data))
+	this.lock.acquire("cmd", () => this.callTable[data.command].bind(this)(data))
 	    .catch((e) => { console.log("命令调用失败：", e) })
     }
 
