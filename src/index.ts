@@ -11,7 +11,8 @@ import commandLineUsage from 'command-line-usage'
 import AsyncLock from 'async-lock'
 import { Client, createClient, FriendInfo, GroupInviteEvent, GroupMessageEvent,
 	 MemberDecreaseEvent, MemberIncreaseEvent, MemberInfo, PrivateMessageEvent,
-         MessageElem, segment, GroupRecallEvent, PrivateMessage, GroupMessage } from 'oicq'
+         MessageElem, segment, GroupRecallEvent, PrivateMessage, GroupMessage, GroupInfo } from 'oicq'
+
 
 const commandOptions = [
     { name: 'host', alias: 'a', type: String,
@@ -61,6 +62,10 @@ const j = (some: object) => {
     return JSON.stringify(some).concat("\n")
 }
 
+function fixMemberName(m: MemberInfo | GroupMessage["sender"]) {
+    return (m.card === '' ? m.nickname : m.card)
+}
+
 function genName(name: string, id: number): string {
     return name.concat('#').concat(id.toString().slice(-4))
 }
@@ -92,7 +97,7 @@ function translateMessageElem(msg: MessageElem): string {
 	case "file":
 	    return `收到QQ文件（本版本不支持查看）`
 	case "video":
-	    return `收到QQ视频版本不支持查看）`
+	    return `收到QQ视频（本版本不支持查看）`
 	case "at":
 	    return `${msg.text}`
 	case "flash":
@@ -118,6 +123,7 @@ class AxonClient {
     /* 帐号信息表与昵称重复表 */
     // acctInfoTable: Array<MemberInfo | FriendInfo> = []
     chatNickDupTable: Map<number, string[]> = new Map()
+    memberInfoCache: MemberInfo[] = []
     dmNickDupTable: string[] = []
     
     client: Client | null = null
@@ -126,9 +132,6 @@ class AxonClient {
     invitation: GroupInviteEvent | null = null
 
     lock = new AsyncLock()
-
-    buffers: Buffer[] = []
-    isReading: boolean = false
 
     /* 命令调用表 */
     callTable: any = {
@@ -151,11 +154,9 @@ class AxonClient {
 
     /* 构建单个群聊的群员昵称重复表 */
     async buildChatNickDupTable(gid: number, no_cache = false) {
-	console.log(this.chatNickDupTable)
 	if (!no_cache && this.chatNickDupTable.has(gid)) return
 	
 	let nickDupList: string[] = []
-	console.log("GET GROUP MEMBER LIST!!!")
 	let chatMemberList = await this.client?.getGroupMemberList(gid, no_cache)
 	let chatMemberListIter = chatMemberList?.values()
 
@@ -209,10 +210,10 @@ class AxonClient {
 	const dupNameList = this.chatNickDupTable.get(gid)
 	if (dupNameList === undefined) return "错误用户"
 
-	if (dupNameList.includes(k.card ? k.card : k.nickname))
-	    return genName(k.card ? k.card : k.nickname, k.user_id)
+	if (dupNameList.includes(fixMemberName(k)))
+	    return genName(fixMemberName(k), k.user_id)
 	else
-	    return k.card ? k.card : k.nickname
+	    return fixMemberName(k)
     }
 
     /* 从替代昵称获取好友信息 */
@@ -322,7 +323,7 @@ class AxonClient {
 	this.conn.write(j({
 	    "status": c.R_STAT_EVENT,
 	    "type"  : c.E_GROUP_INCREASE,
-	    "name"  : this.buildChatMemberAltName(e.group_id, member),
+	    "name"  : await this.buildChatMemberAltName(e.group_id, member),
 	    "id"    : e.group_id,
 	}))
     }
@@ -332,7 +333,7 @@ class AxonClient {
 	    "status": c.R_STAT_EVENT,
 	    "type"  : c.E_GROUP_DECREASE,
 	    "name"  : e.member
-		? this.buildChatMemberAltName(e.group_id, e.member)
+		? await this.buildChatMemberAltName(e.group_id, e.member)
 		: "未知用户",
 	    "id"    : e.group_id,
 	}))
@@ -350,7 +351,7 @@ class AxonClient {
 	this.conn.write(j({
 	    "status": c.R_STAT_EVENT,
 	    "type"  : c.E_GROUP_RECALL,
-	    "name": this.buildChatMemberAltName(e.group_id, member),
+	    "name": await this.buildChatMemberAltName(e.group_id, member),
 	    "id"    : e.group_id
 	}))
     }
@@ -529,6 +530,10 @@ class AxonClient {
 	}
 
 	for (let member of memberList.values()) {
+	    /* 缓存获取到的群员信息 */
+	    if (!this.memberInfoCache.includes(member))
+		this.memberInfoCache.push(member)
+	    
 	    if (friendList.has(member.user_id)) {
 		let friendInfo = friendList.get(member.user_id)
 		if (!friendInfo) {
@@ -626,54 +631,45 @@ class AxonClient {
 	}
     }
 
-    async _lookupCb (info: i.LOOKUP_INFO) {}
-    
-    // async _lookupCb (info: i.LOOKUP_INFO) {
-    // 	let results: (FriendInfo | MemberInfo)[] = [];
+    async _lookupCb (info: i.LOOKUP_INFO) {
+	let checkId = verifyAltName(info.nickname)
+	let realName = checkId ? stripRealName(info.nickname) : info.nickname
 
-    // 	for (let ii of this.acctInfoTable) {
-    // 	    if ("card" in ii) {
-    // 		if (ii.card !== '') {
-    // 		    if (ii.card == info.nickname)
-    // 			results.push(ii)
-    // 		    else if (ii.user_id.toString().endsWith(info.nickname.split('#').slice(-1)[0])
-    // 			&& stripRealName(info.nickname)  === ii.card)
-    // 			results.push(ii)
+	/* 从昵称获取相关群员信息 */
+	let related: MemberInfo[] = []
+	for (const memberInfo of this.memberInfoCache) {
+	    if (checkId && fixMemberName(memberInfo) === realName
+		&& memberInfo.user_id.toString().endsWith(info.nickname.slice(-4)))
+		related.push(memberInfo)
+	    else if (!checkId && fixMemberName(memberInfo) === realName)
+		related.push(memberInfo)
+	}
 
-    // 		    continue
-    // 		}
-    // 	    }
+	/* 通过 ID 继续搜索相关信息 */
+	for (const id of related.map(v => v.user_id)) {
+	    for (const memberInfo of this.memberInfoCache) {
+		if (memberInfo.user_id === id)
+		    related.push(memberInfo)
+	    }
+	}
+	related = related.filter((x, i) => i === related.indexOf(x))
+	
+	let infoList: GroupInfo[] = []
+	let groupList = this.client?.getGroupList()
+	for (const gid of related.map(v => v.group_id)) {
+	    let info = groupList?.get(gid)
+	    if (!info) continue
+	    infoList.push(info)
+	}
 
-    // 	    if (info.nickname == ii.nickname)
-    // 		results.push(ii)
-    // 	    else if (ii.user_id.toString().endsWith(info.nickname.split('#').slice(-1)[0])
-    // 		&& stripRealName(info.nickname) === ii.nickname)
-    // 		results.push(ii)
-    // 	}
+	let related_id = related.map(v => v.user_id)
+	related_id = related_id.filter((x, i) => i === related_id.indexOf(x))
+	this.conn.write(j({
+	    "relation": infoList.map(v => `${v.group_name}[${v.group_id}]`).join("、"),
+	    "id": related_id.join("、")
+	}))
+    }
 
-    // 	let joined_group: string[] = [];
-
-    // 	for (let ii of results)
-    // 	    if ("group_id" in ii) {
-    // 		const g = this.client?.gl.get(ii.group_id)
-    // 		if (!g) return
-    // 		joined_group.push(`${g.group_name}[${g.group_id}]`)
-    // 	    }
-
-    // 	try {
-    // 	    this.conn.write(j({
-    // 		"status": c.R_OK,
-    // 		"nickname": results[0].nickname,
-    // 		"id": results[0].user_id.toString(),
-    // 		"card": stripRealName(info.nickname) ,
-    // 		"relation": joined_group.join(', '),
-    // 		"sex": results[0].sex,
-    // 	    }))
-    // 	} catch (e) {
-    // 	    console.log(e)
-    // 	    this.conn.write(c.R_ERR_NON_EXIST_J);
-    // 	}
-    // }
     
     handleData (data: any) {
 	if (options.debug)
